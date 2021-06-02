@@ -1,6 +1,6 @@
 cabal-version:       2.4
 name:                tblis-hs
-version:             0.0.0.0
+version:             0.0.1.0
 synopsis:            Haskell bindings to TBLIS library for tensor operations
 description:         Haskell bindings to TBLIS library for tensor operations
 homepage:            https://github.com/twesterhout/tblis-hs
@@ -14,9 +14,7 @@ category:            [Math, Concurrency]
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 8.6.5
-                     GHC == 8.8.3
-                     GHC == 8.10.1
+tested-with:         GHC == 8.10.4
 
 source-repository head
   type:                git
@@ -60,17 +58,48 @@ common common-options
                        TupleSections
                        TypeApplications
                        ViewPatterns
+                       DuplicateRecordFields
+                       BangPatterns
+                       FlexibleInstances
+                       FlexibleContexts
+                       DerivingStrategies
+                       GADTs
 
 library
   import:              common-options
   hs-source-dirs:      src
-  exposed-modules:     TblisHs
+  exposed-modules:      Numeric.TBLIS.Context
+                      , Numeric.TBLIS.Types
+                      , Numeric.TBLIS
+                      , TblisHs
+  build-depends:       bytestring
+                     , vector
+                     , containers
+                     , template-haskell
+                     , inline-c
+                     , primitive
+                     , dlpack-hs
+  -- build-tools:         c2hs
+  include-dirs:        /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/include
+                     , cbits
+  extra-lib-dirs:      /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/lib
+  extra-libraries:     tblis
+  c-sources:           cbits/wrapper.h
+                       cbits/wrapper.c
+  ld-options:          -Wl,-rpath=/home/tom/src/tblis-hs/tmp.7GPvb41Mjg/lib
 
 executable tblis-hs
   import:              common-options
+  buildable:           False
   hs-source-dirs:      app
   main-is:             Main.hs
   build-depends:       tblis-hs
+                     , vector
+                     , primitive
+  -- , arrayfire
+  -- include-dirs:        /home/tom/src/tblis-hs/third_party/arrayfire/include
+  -- extra-lib-dirs:      /home/tom/src/tblis-hs/third_party/arrayfire/lib64
+  -- ld-options:          -Wl,-rpath=/home/tom/src/tblis-hs/third_party/arrayfire/lib64
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
