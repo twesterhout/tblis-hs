@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+# A hach to restart the script with Bash
+if [ -z "$BASH" ]; then exec bash "$0" "$@"; fi
+
+set -eu
+set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -L | sed 's://:/:g')"
+
+download_tblis() {
+  mkdir -p "${SCRIPT_DIR}/third_party"
+  cd "${SCRIPT_DIR}/third_party"
+
+  if [ ! -d "tblis" ]; then
+    git clone "https://github.com/devinamatthews/tblis.git"
+  fi
+  cd tblis
+  git checkout 14d7825b0d93ca6df9cf0e1c9f2c96261e5897e9
+}
+
+build_tblis() {
+  cd "${SCRIPT_DIR}/third_party/tblis"
+  if [ ! -f "Makefile" ]; then
+    ./configure \
+      --enable-threading-model=openmp \
+      --enable-config=haswell \
+      --prefix="${SCRIPT_DIR}/third_party/install"
+  fi
+  make -j"$(nproc)"
+}
+
+test_tblis() {
+  cd "${SCRIPT_DIR}/third_party/tblis"
+  ./bin/test
+}
+
+install_tblis() {
+  cd "${SCRIPT_DIR}/third_party/tblis"
+  make install
+  rm -f "${SCRIPT_DIR}/third_party/install/lib"/*.la
+  rm -f "${SCRIPT_DIR}/third_party/install/lib"/*.so*
+}
+
+generate_buildinfo() {
+  cat <<-EOF
+include-dirs:
+    ${SCRIPT_DIR}/third_party/install/include
+extra-lib-dirs:
+    ${SCRIPT_DIR}/third_party/install/lib
+extra-libraries:
+    tblis
+    tci
+    stdc++
+    atomic
+    gomp
+    pthread
+EOF
+}
+
+main() {
+  (
+    export CFLAGS="-O3 -DNDEBUG -fPIC"
+    export CXXFLAGS="-O3 -DNDEBUG -fPIC"
+    echo "Downloading TBLIS..."
+    download_tblis
+    echo "Building TBLIS..."
+    build_tblis
+    # echo "Testing TBLIS..."
+    # test_tblis
+    echo "Installing TBLIS..."
+    install_tblis
+  )
+  echo "Generating buildinfo..."
+  generate_buildinfo >"tblis-hs.buildinfo"
+}
+
+main "$@"

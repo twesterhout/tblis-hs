@@ -11,10 +11,15 @@ author:              Tom Westerhout
 maintainer:          Tom Westerhout <>
 copyright:           2020 Tom Westerhout
 category:            [Math, Concurrency]
-build-type:          Simple
+build-type:          Custom
 extra-doc-files:     README.md
                      CHANGELOG.md
 tested-with:         GHC == 8.10.4
+
+custom-setup
+  setup-depends:       base >= 4.13.0.0 && < 5
+                     , Cabal >= 2.4
+                     , directory >= 1.2.1
 
 source-repository head
   type:                git
@@ -80,20 +85,20 @@ library
                      , primitive
                      , dlpack-hs
   -- build-tools:         c2hs
-  include-dirs:        /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/include
-                     , cbits
-  extra-lib-dirs:      /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/lib
-  extra-libraries:     tblis
-  c-sources:           cbits/wrapper.h
-                       cbits/wrapper.c
-  ld-options:          -Wl,-rpath=/home/tom/src/tblis-hs/tmp.7GPvb41Mjg/lib
+  -- include-dirs:        /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/include
+  --                    , cbits
+  -- extra-lib-dirs:      /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/lib
+  -- extra-libraries:     tblis
+  -- c-sources:           cbits/wrapper.h
+  --                      cbits/wrapper.c
+  -- ld-options:          -Wl,-rpath=/home/tom/src/tblis-hs/tmp.7GPvb41Mjg/lib
 
 executable tblis-hs
   import:              common-options
-  buildable:           False
   hs-source-dirs:      app
   main-is:             Main.hs
   build-depends:       tblis-hs
+                     , dlpack-hs
                      , vector
                      , primitive
   -- , arrayfire
