@@ -5,6 +5,7 @@ module Numeric.TBLIS.Types
     TblisComm,
     TblisConfig,
     TblisType (..),
+    SomeTblisType (..),
     IsTblisType (..),
     TblisScalar (..),
     TblisTensor (..),
@@ -13,10 +14,10 @@ module Numeric.TBLIS.Types
 where
 
 -- import Control.Monad.Primitive
-import Control.Monad.ST
+-- import Control.Monad.ST
 import Data.Complex
-import Data.Primitive.PrimArray
-import Data.Primitive.Types (Prim)
+-- import Data.Primitive.PrimArray
+-- import Data.Primitive.Types (Prim)
 import Foreign.C.Types
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr
@@ -43,6 +44,9 @@ deriving stock instance Show (TblisType a)
 
 deriving stock instance Eq (TblisType a)
 
+data SomeTblisType where
+  SomeTblisType :: IsTblisType a => TblisType a -> SomeTblisType
+
 -- typedef enum
 -- {
 --     TYPE_SINGLE   = 0,
@@ -66,16 +70,25 @@ instance IsTblisType Float where tblisTypeOf _ = TblisFloat
 
 instance IsTblisType Double where tblisTypeOf _ = TblisDouble
 
+instance IsTblisType (Complex Float) where tblisTypeOf _ = TblisComplexFloat
+
+instance IsTblisType (Complex Double) where tblisTypeOf _ = TblisComplexDouble
+
 newtype TblisScalar a = TblisScalar a
+  deriving stock (Read, Show, Generic)
+  deriving newtype (Eq, Ord, Num)
 
 instance IsTblisType a => Storable (TblisScalar a) where
   sizeOf _ = 16 + 8
+  {-# INLINE sizeOf #-}
   alignment _ = 8
+  {-# INLINE alignment #-}
   peek p = case tblisTypeOf (Proxy :: Proxy a) of
     TblisFloat -> TblisScalar <$> peekByteOff p 0
     TblisDouble -> TblisScalar <$> peekByteOff p 0
     TblisComplexFloat -> TblisScalar <$> peekByteOff p 0
     TblisComplexDouble -> TblisScalar <$> peekByteOff p 0
+  {-# INLINE peek #-}
   poke p (TblisScalar x) = do
     pokeByteOff p 0 x
     pokeByteOff p 16
@@ -83,14 +96,8 @@ instance IsTblisType a => Storable (TblisScalar a) where
       . fromEnum
       . tblisTypeOf
       $ (Proxy :: Proxy a)
+  {-# INLINE poke #-}
 
--- type_t type;
--- int conj;
--- tblis_scalar scalar;
--- void* data;
--- unsigned ndim;
--- len_type* len;
--- stride_type* stride;
 data TblisTensor a = TblisTensor
   { tblisTensorConj :: !Bool,
     tblisTensorScalar :: !(TblisScalar a),
@@ -100,6 +107,13 @@ data TblisTensor a = TblisTensor
     tblisTensorStride :: !(Ptr TblisStrideType)
   }
 
+-- type_t type;
+-- int conj;
+-- tblis_scalar scalar;
+-- void* data;
+-- unsigned ndim;
+-- len_type* len;
+-- stride_type* stride;
 instance IsTblisType a => Storable (TblisTensor a) where
   sizeOf _ = 4 + 4 + 24 + 8 + 8 + 8 + 8
   alignment _ = 8
@@ -111,6 +125,7 @@ instance IsTblisType a => Storable (TblisTensor a) where
     pokeByteOff p 40 . (fromIntegral :: Int -> CUInt) $ tblisTensorNDim x
     pokeByteOff p 48 $ tblisTensorLen x
     pokeByteOff p 56 $ tblisTensorStride x
+  peek _ = error $ "peek is not implemented for TblisTensor"
 
 -- peek p =
 --   TblisTensor <$> peekByteOff p 4

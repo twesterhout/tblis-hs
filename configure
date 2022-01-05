@@ -16,7 +16,7 @@ download_tblis() {
     git clone "https://github.com/devinamatthews/tblis.git"
   fi
   cd tblis
-  git checkout 14d7825b0d93ca6df9cf0e1c9f2c96261e5897e9
+  # git checkout 14d7825b0d93ca6df9cf0e1c9f2c96261e5897e9
 }
 
 build_tblis() {

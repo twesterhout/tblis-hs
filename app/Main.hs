@@ -17,10 +17,14 @@ main = do
           [1, 1, 1],
           [1, 1, 1]
         ]
+      c :: [Double]
+      c = [1, 1, 1]
   (b' :: [Double]) <-
-    withDLTensor a $ \tensorA ->
-      withDLTensor b $ \tensorB -> do
-        tblisAdd (1 :: Double) False tensorA "ij" 0 tensorB "ji"
+    withDLTensor a $ \dlTensorA ->
+      withDLTensor c $ \dlTensorB -> do
+        let tensorA = tblisFromDLTensor dlTensorA
+            tensorB = tblisScale 0 $ tblisFromDLTensor dlTensorB
+        tblisAdd tensorA "ij" tensorB "ji"
         return $ tensorToFlatList tensorB
   print b'
   putStrLn "Hello world!"
