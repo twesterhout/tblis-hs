@@ -7,13 +7,15 @@ set -eu
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -L | sed 's://:/:g')"
+PREFIX=
+USE_SYSTEM_TBLIS=0
 
 download_tblis() {
   mkdir -p "${SCRIPT_DIR}/third_party"
   cd "${SCRIPT_DIR}/third_party"
 
   if [ ! -d "tblis" ]; then
-    git clone "https://github.com/devinamatthews/tblis.git"
+    git clone --depth=1 "https://github.com/devinamatthews/tblis.git"
   fi
   cd tblis
   # git checkout 14d7825b0d93ca6df9cf0e1c9f2c96261e5897e9
@@ -23,11 +25,11 @@ build_tblis() {
   cd "${SCRIPT_DIR}/third_party/tblis"
   if [ ! -f "Makefile" ]; then
     ./configure \
-      --enable-threading-model=openmp \
+      --enable-thread-model=pthread \
       --enable-config=haswell \
-      --prefix="${SCRIPT_DIR}/third_party/install"
+      --prefix="$PREFIX"
   fi
-  make -j"$(nproc)"
+  make -j"$(nproc --all)"
 }
 
 test_tblis() {
@@ -38,16 +40,16 @@ test_tblis() {
 install_tblis() {
   cd "${SCRIPT_DIR}/third_party/tblis"
   make install
-  rm -f "${SCRIPT_DIR}/third_party/install/lib"/*.la
-  rm -f "${SCRIPT_DIR}/third_party/install/lib"/*.so*
+  rm -f "${PREFIX}/lib"/*.la
+  rm -f "${PREFIX}/lib"/*.so*
 }
 
 generate_buildinfo() {
   cat <<-EOF
 include-dirs:
-    ${SCRIPT_DIR}/third_party/install/include
+    ${PREFIX}/include
 extra-lib-dirs:
-    ${SCRIPT_DIR}/third_party/install/lib
+    ${PREFIX}/lib
 extra-libraries:
     tblis
     tci
@@ -58,10 +60,40 @@ extra-libraries:
 EOF
 }
 
+parse_options() {
+  for i in "$@"; do
+    case $i in
+    --libdir=*)
+      # PREFIX="${i#*=}"
+      shift # past argument=value
+      ;;
+    --use-system-tblis)
+      USE_SYSTEM_TBLIS=1
+      shift # past argument with no value
+      ;;
+    CC=*)
+      export CC="${i#*=}"
+      shift
+      ;;
+    CXX=*)
+      export CXX="${i#*=}"
+      shift
+      ;;
+    *) shift ;;
+    esac
+  done
+  if [ -z "$PREFIX" ]; then
+    PREFIX=${SCRIPT_DIR}/third_party/install
+  fi
+}
+
 main() {
-  (
-    export CFLAGS="-O3 -DNDEBUG -fPIC"
-    export CXXFLAGS="-O3 -DNDEBUG -fPIC"
+  export CFLAGS="-O0 -DNDEBUG -fPIC"
+  export CXXFLAGS="-O0 -DNDEBUG -fPIC"
+  PREFIX=$(pwd)
+  echo "Using PREFIX=$PREFIX..."
+  parse_options "$@"
+  if [ $USE_SYSTEM_TBLIS -eq 0 ]; then
     echo "Downloading TBLIS..."
     download_tblis
     echo "Building TBLIS..."
@@ -70,9 +102,10 @@ main() {
     # test_tblis
     echo "Installing TBLIS..."
     install_tblis
-  )
+  fi
   echo "Generating buildinfo..."
-  generate_buildinfo >"tblis-hs.buildinfo"
+  generate_buildinfo >"$PREFIX/tblis-hs.buildinfo"
 }
 
+# echo "$SCRIPT_DIR"
 main "$@"

@@ -25,14 +25,16 @@ main = defaultMainWithHooks $ autoconfUserHooks {postCopy = copyLibTblis}
 copyLib :: ConfigFlags -> LocalBuildInfo -> FilePath -> IO ()
 copyLib flags localBuildInfo libPref = do
   notice verbosity $ "Copying TBLIS C library..."
-  libDir <- (<> "/cbits/") <$> getCurrentDirectory
+  -- libDir <- (<> "/third_party/install/lib") <$> getCurrentDirectory
+  let libDir = "lib"
   forM_ ["libtblis.a", "libtci.a"] $ \f ->
     installMaybeExecutableFile verbosity (libDir <> "/" <> f) (libPref <> "/" <> f)
   where
     verbosity = fromFlag $ configVerbosity flags
 
 copyLibTblis :: Args -> CopyFlags -> PackageDescription -> LocalBuildInfo -> IO ()
-copyLibTblis _ flags packageDescription localBuildInfo = copyLib config localBuildInfo libPref
+copyLibTblis _ flags packageDescription localBuildInfo =
+  unless (getCabalFlag "" config) $ copyLib config localBuildInfo libPref
   where
     libPref = libdir . absoluteInstallDirs packageDescription localBuildInfo . fromFlag . copyDest $ flags
     config = configFlags localBuildInfo

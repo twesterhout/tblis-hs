@@ -22,6 +22,11 @@ custom-setup
                      , Cabal >= 2.4
                      , directory >= 1.2.1
 
+flag use_system_tblis
+  description: Use TBLIS already installed on the system rather than compiling it from source
+  manual: True
+  default: False
+
 source-repository head
   type:                git
   location:            https://github.com/twesterhout/tblis-hs.git
