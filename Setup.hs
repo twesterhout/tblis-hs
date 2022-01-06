@@ -1,7 +1,8 @@
 module Main (main) where
 
-import Control.Monad (forM_, unless)
+import Control.Monad (forM_, unless, when)
 import Data.Char (toLower)
+import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Distribution.PackageDescription
 import Distribution.Simple
@@ -17,7 +18,7 @@ import Distribution.Simple.Utils
     notice,
     rawSystemExit,
   )
-import System.Directory (getCurrentDirectory)
+import System.Directory (doesDirectoryExist, findFilesWith, getCurrentDirectory, listDirectory)
 
 main :: IO ()
 main = defaultMainWithHooks $ autoconfUserHooks {postCopy = copyLibTblis}
@@ -25,11 +26,24 @@ main = defaultMainWithHooks $ autoconfUserHooks {postCopy = copyLibTblis}
 copyLib :: ConfigFlags -> LocalBuildInfo -> FilePath -> IO ()
 copyLib flags localBuildInfo libPref = do
   notice verbosity $ "Copying TBLIS C library..."
-  -- libDir <- (<> "/third_party/install/lib") <$> getCurrentDirectory
-  let libDir = "lib"
-  forM_ ["libtblis.a", "libtci.a"] $ \f ->
-    installMaybeExecutableFile verbosity (libDir <> "/" <> f) (libPref <> "/" <> f)
+  print =<< getCurrentDirectory
+  let cabalBuildDir = buildDir localBuildInfo
+  files <- filter (isPrefixOf "tblis-") <$> listDirectory cabalBuildDir
+  forM_ files $ \file -> do
+    let prefix = cabalBuildDir <> "/" <> file
+    hasLib <- doesDirectoryExist (prefix <> "/lib")
+    hasInclude <- doesDirectoryExist (prefix <> "/include")
+    when (hasLib && hasInclude) $
+      forM_ ["libtblis.a", "libtci.a"] $ \f ->
+        installMaybeExecutableFile verbosity (prefix <> "/lib/" <> f) (libPref <> "/" <> f)
   where
+    -- print files
+    -- print $ buildDir localBuildInfo
+    -- libDir <- (<> "/third_party/install/lib") <$> getCurrentDirectory
+    -- let libDir = "lib"
+    -- forM_ ["libtblis.a", "libtci.a"] $ \f ->
+    --   installMaybeExecutableFile verbosity (libDir <> "/" <> f) (libPref <> "/" <> f)
+
     verbosity = fromFlag $ configVerbosity flags
 
 copyLibTblis :: Args -> CopyFlags -> PackageDescription -> LocalBuildInfo -> IO ()

@@ -87,6 +87,37 @@ parse_options() {
   fi
 }
 
+generate_buildinfo_v2() {
+  declare archive_name=$(find "$SCRIPT_DIR" -name "tblis-*.tar.bz2" | head -n1)
+  if [ -z "$archive_name" ]; then
+    echo "[*] Did not find binary distribution of TBLIS, downloading it ..."
+    wget -q https://github.com/twesterhout/tblis-hs/releases/download/v0.0.0.0/tblis-linux-x86_64-6decdb9.tar.bz2
+    archive_name=$(find "$SCRIPT_DIR" -name "tblis-*.tar.bz2" | head -n1)
+  fi
+  declare folder_name
+  folder_name=$(basename "$archive_name")
+  folder_name=${folder_name%.tar.bz2}
+  if [ ! -d "$folder_name" ]; then
+    echo "[*] Unpacking $archive_name in $(pwd) ..."
+    tar -xf "$archive_name"
+  fi
+
+  declare -r prefix=$(realpath "$folder_name")
+  echo "[*] Using prefix = $prefix ..."
+  cat >"tblis-hs.buildinfo" <<-EOF
+include-dirs:
+    $prefix/include
+extra-lib-dirs:
+    $prefix/lib
+extra-libraries:
+    tblis
+    tci
+    stdc++
+    atomic
+    pthread
+EOF
+}
+
 main() {
   export CFLAGS="-O0 -DNDEBUG -fPIC"
   export CXXFLAGS="-O0 -DNDEBUG -fPIC"
@@ -108,4 +139,6 @@ main() {
 }
 
 # echo "$SCRIPT_DIR"
-main "$@"
+# main "$@"
+echo "[*] Running configure ..."
+generate_buildinfo_v2
