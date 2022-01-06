@@ -1,5 +1,6 @@
 module Numeric.TBLIS.Types
-  ( TblisLenType,
+  ( TblisError (..),
+    TblisLenType,
     TblisStrideType,
     TblisLabelType,
     TblisComm,
@@ -9,20 +10,35 @@ module Numeric.TBLIS.Types
     IsTblisType (..),
     TblisScalar (..),
     TblisTensor (..),
+    tblisToTypedTensor,
+    TblisTypedTensor,
     -- mkTblisTensor,
   )
 where
 
 -- import Control.Monad.Primitive
 -- import Control.Monad.ST
-import Data.Complex
+
 -- import Data.Primitive.PrimArray
 -- import Data.Primitive.Types (Prim)
+
+import DLPack (IsDLDataType)
+import Data.Complex (Complex)
+import qualified Data.Complex
+import Data.Proxy
 import Foreign.C.Types
+import Foreign.Marshal.Array (peekArray)
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr
 import Foreign.Storable
+import qualified GHC.Exts as GHC
+import GHC.TypeLits
+import System.IO.Unsafe (unsafePerformIO)
 import Prelude hiding (pred)
+
+natToInt :: forall n. KnownNat n => Int
+natToInt = fromIntegral $ GHC.TypeLits.natVal (Proxy @n)
+{-# INLINE natToInt #-}
 
 type TblisLenType = CPtrdiff
 
@@ -33,6 +49,13 @@ type TblisLabelType = CChar
 data TblisComm
 
 data TblisConfig
+
+newtype TblisError = TblisError Text
+  deriving stock (Show, Eq, Generic)
+
+-- instance Error TblisError where
+--   strMsg = TblisError . toText
+--   {-# INLINE strMsg #-}
 
 data TblisType :: (Type -> Type) where
   TblisFloat :: TblisType Float
@@ -63,7 +86,7 @@ instance Enum (TblisType a) where
     TblisComplexDouble -> 3
   toEnum = error "toEnum not implemented for TblisType"
 
-class (Num a, Storable a) => IsTblisType a where
+class (Num a, Storable a, IsDLDataType a) => IsTblisType a where
   tblisTypeOf :: proxy a -> TblisType a
 
 instance IsTblisType Float where tblisTypeOf _ = TblisFloat
@@ -100,11 +123,11 @@ instance IsTblisType a => Storable (TblisScalar a) where
 
 data TblisTensor a = TblisTensor
   { tblisTensorConj :: !Bool,
-    tblisTensorScalar :: !(TblisScalar a),
-    tblisTensorData :: !(Ptr a),
-    tblisTensorNDim :: !Int,
-    tblisTensorLen :: !(Ptr TblisLenType),
-    tblisTensorStride :: !(Ptr TblisStrideType)
+    tblisTensorScalar :: {-# UNPACK #-} !(TblisScalar a),
+    tblisTensorData :: {-# UNPACK #-} !(Ptr a),
+    tblisTensorNDim :: {-# UNPACK #-} !Int,
+    tblisTensorLen :: {-# UNPACK #-} !(Ptr TblisLenType),
+    tblisTensorStride :: {-# UNPACK #-} !(Ptr TblisStrideType)
   }
 
 -- type_t type;
@@ -126,6 +149,137 @@ instance IsTblisType a => Storable (TblisTensor a) where
     pokeByteOff p 48 $ tblisTensorLen x
     pokeByteOff p 56 $ tblisTensorStride x
   peek _ = error $ "peek is not implemented for TblisTensor"
+
+newtype TblisTypedTensor (rank :: Nat) (a :: Type) = TblisTypedTensor (TblisTensor a)
+
+tblisToTypedTensor :: forall r a. (HasCallStack, KnownNat r) => TblisTensor a -> TblisTypedTensor r a
+tblisToTypedTensor t
+  | tblisTensorNDim t == natToInt @r = TblisTypedTensor t
+  | otherwise =
+    error $
+      "tensor has wrong rank: " <> show (tblisTensorNDim t)
+        <> "; expected "
+        <> show (natToInt @r)
+
+conjugateScalar :: forall a. IsTblisType a => TblisScalar a -> TblisScalar a
+conjugateScalar (TblisScalar z) = TblisScalar $
+  case tblisTypeOf (Proxy @a) of
+    TblisFloat -> z
+    TblisDouble -> z
+    TblisComplexFloat -> Data.Complex.conjugate z
+    TblisComplexDouble -> Data.Complex.conjugate z
+{-# INLINE conjugateScalar #-}
+
+tensorShape :: TblisTensor a -> [Int]
+tensorShape t = unsafePerformIO $ do
+  let helper i = let !i' = fromIntegral i in i'
+  fmap helper <$> peekArray (tblisTensorNDim t) (tblisTensorLen t)
+
+tensorIndex :: IsTblisType a => TblisTensor a -> [Int] -> IO a
+tensorIndex t index = do
+  stride <- fmap fromIntegral <$> peekArray (tblisTensorNDim t) (tblisTensorStride t)
+  let shape = tensorShape t
+  -- <- fmap fromIntegral <$> peekArray (tblisTensorNDim t) (tblisTensorLen t)
+  when (any id $ zipWith (\i n -> i < 0 || i >= n) index shape) $
+    error $ "invalid index: " <> show index
+  let !linearIndex = sum $ zipWith (*) stride index
+  !s <- (tblisTensorScalar t *) . TblisScalar <$> peekElemOff (tblisTensorData t) linearIndex
+  let (TblisScalar !z) = if (tblisTensorConj t) then conjugateScalar s else s
+  pure z
+{-# NOINLINE tensorIndex #-}
+
+flattenTensorToList :: IsTblisType a => TblisTensor a -> [a]
+flattenTensorToList t = unsafePerformIO $ do
+  -- <- fmap fromIntegral <$> peekArray (tblisTensorNDim t) (tblisTensorLen t)
+  let !shape = tensorShape t
+      indices = sequence . fmap (\n -> [0 .. n - 1]) $ shape
+      f i = do !x <- tensorIndex t i; pure x
+  mapM f indices
+
+-- tensorToList1D :: forall a. Prim a => TblisTypedTensor 1 a -> [a]
+-- tensorToList1D t = runST $
+--   withForeignPtr' (tensorData t) $ \p ->
+--     go p [] (stride * (extent - 1))
+--   where
+--     !stride = indexPrimArray (tensorStrides t) 0
+--     !extent = indexPrimArray (tensorShape t) 0
+--     go :: PrimMonad m => Ptr a -> [a] -> Int -> m [a]
+--     go !p acc !i
+--       | i >= 0 = do
+--         !x <- P.readOffPtr p i
+--         go p (x : acc) (i - stride)
+--       | otherwise = touch t >> pure acc
+--
+-- tensorFromList1D :: forall a. (HasCallStack, Prim a) => Int -> [a] -> Tensor 'CPU 1 a
+-- tensorFromList1D n xs = unsafePerformIO $ do
+--   t <- newTensor [n]
+--   withForeignPtr (tensorData t) $ \p -> do
+--     let go !i []
+--           | i == n = pure ()
+--           | otherwise = error $ "list is shorter than expected"
+--         go !i (y : ys)
+--           | i < n = P.writeOffPtr p i y >> go (i + 1) ys
+--           | otherwise = error "list is longer than expected"
+--     go 0 xs
+--   pure t
+--
+-- instance IsTblisType a => GHC.IsList (TblisTypedTensor 1 a) where
+--   type Item (TblisTypedTensor 1 a) = a
+--   toList = tensorToList1D
+--   fromList xs = tensorFromList1D (length xs) xs
+--   fromListN n xs = tensorFromList1D n xs
+
+splitAt' :: HasCallStack => Int -> [a] -> ([a], [a])
+splitAt' = go
+  where
+    go 0 [] = ([], [])
+    go 1 (x : xs) = ([x], xs)
+    go m (x : xs) = (x : xs', xs'')
+      where
+        (xs', xs'') = go (m - 1) xs
+    go _ [] = error "wrong list length"
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf n = go
+  where
+    go [] = []
+    go xs@(_ : _) = let (ys, zs) = splitAt' n xs in ys : go zs
+
+-- listShape2D :: [[a]] -> [Int]
+-- listShape2D [] = [0, 0]
+-- listShape2D xs@(x : _) = [length xs, length x]
+-- {-# INLINE listShape2D #-}
+
+-- listShape3D :: [[[a]]] -> [Int]
+-- listShape3D [] = [0, 0, 0]
+-- listShape3D xs@(x : _) = length xs : listShape2D x
+--
+-- listShape4D :: [[[a]]] -> [Int]
+-- listShape4D [] = [0, 0, 0, 0]
+-- listShape4D xs@(x : _) = length xs : listShape3D x
+--
+-- listShape5D :: [[[[a]]]] -> [Int]
+-- listShape5D [] = [0, 0, 0, 0, 0]
+-- listShape5D xs@(x : _) = length xs : listShape4D x
+
+instance IsTblisType a => GHC.IsList (TblisTypedTensor 1 a) where
+  type Item (TblisTypedTensor 1 a) = a
+  toList (TblisTypedTensor t) = flattenTensorToList t
+  fromList _ = error "IsList instance of TblisTypedTensor does not implement fromList"
+
+instance IsTblisType a => GHC.IsList (TblisTypedTensor 2 a) where
+  type Item (TblisTypedTensor 2 a) = [a]
+  toList (TblisTypedTensor t) = case tensorShape t of
+    [_, d₁] -> chunksOf d₁ (flattenTensorToList t)
+    _ -> error "impossible: tensor must be rank 2"
+  fromList _ = error "IsList instance of TblisTypedTensor does not implement fromList"
+
+instance IsTblisType a => GHC.IsList (TblisTypedTensor 3 a) where
+  type Item (TblisTypedTensor 3 a) = [[a]]
+  toList (TblisTypedTensor t) = case tensorShape t of
+    [_, d₁, d₂] -> chunksOf d₁ . chunksOf d₂ $ flattenTensorToList t
+    _ -> error "impossible: tensor must be rank 3"
+  fromList _ = error "IsList instance of TblisTypedTensor does not implement fromList"
 
 -- peek p =
 --   TblisTensor <$> peekByteOff p 4

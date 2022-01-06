@@ -3,20 +3,36 @@
 module Numeric.TBLIS
   ( tblisAdd,
     tblisAdd',
+    tblisTensorAdd,
+    tblisMult,
+    tblisMult',
+    tblisTensorMult,
+    tblisScale,
+    tblisConjugate,
+    tblisFromDLTensor,
     tblisGetNumberThreads,
     tblisSetNumberThreads,
     tblisSingle,
     tblisParallel,
     tblisDefaultConfig,
+    TblisTypedTensor,
+    tblisToTypedTensor,
+    TblisTensor (..),
+    TblisScalar (..),
+    IsTblisType,
+    TblisComm,
+    TblisConfig,
   )
 where
 
 import Control.Monad.Primitive
+import Control.Monad.Trans.Except
 import DLPack
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.Marshal.Utils
 import Foreign.Ptr
+import Foreign.Storable (Storable, sizeOf)
 import Numeric.TBLIS.Types
 
 toDLDataType :: forall a. IsDLDataType a => TblisType a -> DLDataType
@@ -32,21 +48,27 @@ fromDLDataType dtype
   | otherwise = Nothing
 {-# INLINE fromDLDataType #-}
 
-requireType :: IsDLDataType a => TblisType a -> DLTensor -> Either Text ()
+requireType :: IsDLDataType a => TblisType a -> DLTensor -> Either TblisError ()
 requireType !dtype !t
   | toDLDataType dtype == dlTensorDType t = Right ()
   | otherwise =
-    Left $
+    Left . TblisError $
       "DLTensor has wrong type: " <> show (dlTensorDType t) <> "; expected "
         <> show (toDLDataType dtype)
 {-# INLINE requireType #-}
 
-requireDevice :: DLTensor -> Either Text ()
+checkCoercibleToInt64 :: forall i proxy. (Integral i, Storable i) => proxy i -> Either TblisError ()
+checkCoercibleToInt64 _
+  | sizeOf (undefined :: i) == sizeOf (undefined :: Int64) = Right ()
+  | otherwise = Left . TblisError $ "TblisLenType or TblisStrideType are not 64-bit"
+{-# INLINE checkCoercibleToInt64 #-}
+
+requireDevice :: DLTensor -> Either TblisError ()
 requireDevice t = case dlDeviceType (dlTensorDevice t) of
   DLCPU -> Right ()
   DLCUDAHost -> Right ()
   device ->
-    Left $
+    Left . TblisError $
       "DLTensor is located on wrong device: " <> show device
         <> "; TBLIS only supports CPU tensors"
 {-# INLINE requireDevice #-}
@@ -63,14 +85,12 @@ tblisScale a t = t {tblisTensorScalar = TblisScalar a * tblisTensorScalar t}
 
 tblisFromDLTensor ::
   forall a.
-  ( Coercible TblisLenType Int64,
-    Coercible TblisStrideType Int64,
-    IsDLDataType a,
-    IsTblisType a
-  ) =>
+  IsTblisType a =>
   DLTensor ->
-  Either Text (TblisTensor a)
+  Either TblisError (TblisTensor a)
 tblisFromDLTensor t = do
+  checkCoercibleToInt64 (Proxy @TblisLenType)
+  checkCoercibleToInt64 (Proxy @TblisStrideType)
   requireType (tblisTypeOf (Proxy @a)) t
   requireDevice t
   pure $
@@ -124,17 +144,60 @@ foreign import ccall "tblis_tensor_add"
   tblis_tensor_add :: Ptr TblisComm -> Ptr TblisConfig -> Ptr (TblisTensor a) -> Ptr TblisLabelType -> Ptr (TblisTensor a) -> Ptr TblisLabelType -> IO ()
 
 tblisAdd ::
-  (IsTblisType a, PrimMonad m) =>
-  TblisTensor a ->
+  (HasCallStack, IsTblisType a, PrimMonad m) =>
+  a ->
+  DLTensor ->
   String ->
-  TblisTensor a ->
+  a ->
+  DLTensor ->
   String ->
   m ()
 tblisAdd = tblisAdd' tblisParallel tblisDefaultConfig
 {-# INLINE tblisAdd #-}
 
 tblisAdd' ::
-  (IsTblisType a, PrimMonad m) =>
+  (HasCallStack, IsTblisType a, PrimMonad m) =>
+  Ptr TblisComm ->
+  Ptr TblisConfig ->
+  a ->
+  DLTensor ->
+  String ->
+  a ->
+  DLTensor ->
+  String ->
+  m ()
+tblisAdd' c_comm c_config α a indexA β b indexB = do
+  !tensorA <- tblisScale α <$> eitherToError (tblisFromDLTensor a)
+  !tensorB <- tblisScale β <$> eitherToError (tblisFromDLTensor b)
+  tblisTensorAdd c_comm c_config tensorA indexA tensorB indexB
+{-# INLINE tblisAdd' #-}
+
+checkRank :: Char -> Int -> String -> Either TblisError ()
+checkRank t rank index
+  | length index == rank = Right ()
+  | otherwise =
+    Left . TblisError $
+      "tensor has rank " <> show rank <> ", but "
+        <> show (length index)
+        <> " indices were provided: "
+        <> show index
+
+checkArgsAdd :: Int -> String -> Int -> String -> Either TblisError ()
+checkArgsAdd rankA indexA rankB indexB = do
+  checkRank 'A' rankA indexA
+  checkRank 'B' rankB indexB
+  let !okay = all (\i -> elem i indexA) indexB
+  when (not okay) $
+    Left . TblisError $
+      "invalid indices: " <> show indexA <> " and " <> show indexB
+
+eitherToError :: (HasCallStack, PrimMonad m) => Either TblisError a -> m a
+eitherToError x = withFrozenCallStack $ case x of
+  Right a -> pure a
+  Left (TblisError e) -> error e
+
+tblisTensorAdd ::
+  (HasCallStack, IsTblisType a, PrimMonad m) =>
   Ptr TblisComm ->
   Ptr TblisConfig ->
   TblisTensor a ->
@@ -142,13 +205,86 @@ tblisAdd' ::
   TblisTensor a ->
   String ->
   m ()
-tblisAdd' c_comm c_config a indexA b indexB = unsafeIOToPrim $
-  with a $ \c_a ->
-    withCString indexA $ \c_indexA ->
-      with b $ \c_b ->
-        withCString indexB $ \c_indexB ->
-          tblis_tensor_add c_comm c_config c_a c_indexA c_b c_indexB
-{-# INLINEABLE tblisAdd' #-}
+tblisTensorAdd c_comm c_config a indexA b indexB = do
+  eitherToError $
+    checkArgsAdd (tblisTensorNDim a) indexA (tblisTensorNDim b) indexB
+  unsafeIOToPrim $
+    with a $ \c_a ->
+      withCString indexA $ \c_indexA ->
+        with b $ \c_b ->
+          withCString indexB $ \c_indexB ->
+            tblis_tensor_add c_comm c_config c_a c_indexA c_b c_indexB
+{-# INLINE tblisTensorAdd #-}
 
-tblisPermute :: PrimMonad m => [Int] -> DLTensor -> DLTensor -> m ()
-tblisPermute permutation tensorA tensorB = undefined
+foreign import ccall "tblis_tensor_mult"
+  tblis_tensor_mult :: Ptr TblisComm -> Ptr TblisConfig -> Ptr (TblisTensor a) -> Ptr TblisLabelType -> Ptr (TblisTensor a) -> Ptr TblisLabelType -> Ptr (TblisTensor a) -> Ptr TblisLabelType -> IO ()
+
+tblisMult ::
+  (HasCallStack, IsTblisType a, PrimMonad m) =>
+  a ->
+  DLTensor ->
+  String ->
+  a ->
+  DLTensor ->
+  String ->
+  a ->
+  DLTensor ->
+  String ->
+  m ()
+tblisMult = tblisMult' tblisParallel tblisDefaultConfig
+{-# INLINE tblisMult #-}
+
+tblisMult' ::
+  (HasCallStack, IsTblisType a, PrimMonad m) =>
+  Ptr TblisComm ->
+  Ptr TblisConfig ->
+  a ->
+  DLTensor ->
+  String ->
+  a ->
+  DLTensor ->
+  String ->
+  a ->
+  DLTensor ->
+  String ->
+  m ()
+tblisMult' c_comm c_config α a indexA β b indexB γ c indexC = do
+  !tensorA <- tblisScale α <$> eitherToError (tblisFromDLTensor a)
+  !tensorB <- tblisScale β <$> eitherToError (tblisFromDLTensor b)
+  !tensorC <- tblisScale γ <$> eitherToError (tblisFromDLTensor c)
+  tblisTensorMult c_comm c_config tensorA indexA tensorB indexB tensorC indexC
+{-# INLINE tblisMult' #-}
+
+checkArgsMult :: Int -> String -> Int -> String -> Int -> String -> Either TblisError ()
+checkArgsMult rankA indexA rankB indexB rankC indexC = do
+  checkRank 'A' rankA indexA
+  checkRank 'B' rankB indexB
+  checkRank 'C' rankC indexC
+  let !okay = all (\i -> elem i indexA || elem i indexB) indexC
+  when (not okay) $
+    Left . TblisError $
+      "invalid indices: " <> show indexA <> ", " <> show indexB <> ", and " <> show indexC
+
+tblisTensorMult ::
+  (HasCallStack, IsTblisType a, PrimMonad m) =>
+  Ptr TblisComm ->
+  Ptr TblisConfig ->
+  TblisTensor a ->
+  String ->
+  TblisTensor a ->
+  String ->
+  TblisTensor a ->
+  String ->
+  m ()
+tblisTensorMult c_comm c_config a indexA b indexB c indexC = do
+  eitherToError $
+    checkArgsMult (tblisTensorNDim a) indexA (tblisTensorNDim b) indexB (tblisTensorNDim c) indexC
+  unsafeIOToPrim $
+    with a $ \c_a ->
+      withCString indexA $ \c_indexA ->
+        with b $ \c_b ->
+          withCString indexB $ \c_indexB ->
+            with c $ \c_c ->
+              withCString indexC $ \c_indexC ->
+                tblis_tensor_mult c_comm c_config c_a c_indexA c_b c_indexB c_c c_indexC
+{-# INLINE tblisTensorMult #-}
