@@ -33,10 +33,6 @@ source-repository head
 
 common common-options
   build-depends:       base >= 4.12.0.0 && < 4.15
-                     , relude
-
-  mixins:              base hiding (Prelude)
-                     , relude (Relude as Prelude)
 
   ghc-options:         -Wall
                        -Wcompat
@@ -82,17 +78,14 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
-  exposed-modules:      Numeric.TBLIS.Context
-                      , Numeric.TBLIS.Types
-                      , Numeric.TBLIS
-                      , TblisHs
-  build-depends:       bytestring
-                     , vector
-                     , containers
+  exposed-modules:     Numeric.TBLIS.Types
+                     , Numeric.TBLIS
+  --  Numeric.TBLIS.Context
+                      -- , TblisHs
+  build-depends:       primitive
                      , transformers
-                     , template-haskell
-                     , inline-c
-                     , primitive
+                     , mtl
+                     , text
                      , dlpack-hs
   -- build-tools:         c2hs
   -- include-dirs:        /home/tom/src/tblis-hs/tmp.7GPvb41Mjg/include
@@ -109,8 +102,7 @@ executable tblis-hs
   main-is:             Main.hs
   build-depends:       tblis-hs
                      , dlpack-hs
-                     , vector
-                     , primitive
+                     , transformers
   -- , arrayfire
   -- include-dirs:        /home/tom/src/tblis-hs/third_party/arrayfire/include
   -- extra-lib-dirs:      /home/tom/src/tblis-hs/third_party/arrayfire/lib64

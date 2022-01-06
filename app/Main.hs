@@ -2,8 +2,8 @@ module Main (main) where
 
 import DLPack
 import GHC.Exts (IsList (..))
+import Control.Monad.Trans.Except (runExceptT)
 import Numeric.TBLIS
-import Prelude hiding (toList)
 
 toList1 :: IsTblisType a => DLTensor -> [a]
 toList1 t = case tblisFromDLTensor t of
@@ -38,20 +38,19 @@ main = do
       c = [3, 2, 1]
   withDLTensor a $ \dlTensorA ->
     withDLTensor c $ \dlTensorB -> do
-      tblisAdd (1 :: Double) dlTensorA "ij" (0 :: Double) dlTensorB "j"
+      Right () <-
+        runExceptT $
+          tblisAdd (1 :: Double) dlTensorA "ij" (0 :: Double) dlTensorB "j"
       print (toList1 @Double dlTensorB)
   withDLTensor a $ \dlTensorA ->
     withDLTensor c $ \dlTensorB ->
       withDLTensor c $ \dlTensorC -> do
-        tblisMult
-          (1 :: Double)
-          dlTensorA
-          "ij"
-          (1 :: Double)
-          dlTensorB
-          "j"
-          (0 :: Double)
-          dlTensorC
-          "i"
+        {- ORMOLU_DISABLE -}
+        Right () <-
+          runExceptT $
+            tblisMult (1 :: Double) dlTensorA "ij"
+                      (1 :: Double) dlTensorB "j"
+                      (0 :: Double) dlTensorC "i"
+        {- ORMOLU_ENABLE -}
         print (toList1 @Double dlTensorC)
   putStrLn "Hello world!"

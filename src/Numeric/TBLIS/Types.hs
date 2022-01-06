@@ -22,16 +22,20 @@ where
 -- import Data.Primitive.PrimArray
 -- import Data.Primitive.Types (Prim)
 
+import Control.Monad (when)
 import DLPack (IsDLDataType)
 import Data.Complex (Complex)
 import qualified Data.Complex
+import Data.Kind (Type)
 import Data.Proxy
+import Data.Text (Text)
 import Foreign.C.Types
 import Foreign.Marshal.Array (peekArray)
 import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr
 import Foreign.Storable
 import qualified GHC.Exts as GHC
+import GHC.Stack
 import GHC.TypeLits
 import System.IO.Unsafe (unsafePerformIO)
 import Prelude hiding (pred)
@@ -51,7 +55,7 @@ data TblisComm
 data TblisConfig
 
 newtype TblisError = TblisError Text
-  deriving stock (Show, Eq, Generic)
+  deriving stock (Show, Eq)
 
 -- instance Error TblisError where
 --   strMsg = TblisError . toText
@@ -98,7 +102,7 @@ instance IsTblisType (Complex Float) where tblisTypeOf _ = TblisComplexFloat
 instance IsTblisType (Complex Double) where tblisTypeOf _ = TblisComplexDouble
 
 newtype TblisScalar a = TblisScalar a
-  deriving stock (Read, Show, Generic)
+  deriving stock (Read, Show)
   deriving newtype (Eq, Ord, Num)
 
 instance IsTblisType a => Storable (TblisScalar a) where
