@@ -14,6 +14,7 @@ category:            [Math, Concurrency]
 build-type:          Custom
 extra-doc-files:     README.md
                      CHANGELOG.md
+extra-source-files:  configure
 tested-with:         GHC == 8.10.4
 
 custom-setup
@@ -69,6 +70,9 @@ common common-options
                        FlexibleContexts
                        DerivingStrategies
                        GADTs
+                       DataKinds
+                       AllowAmbiguousTypes
+                       TypeFamilies
 
 library
   import:              common-options
@@ -80,6 +84,7 @@ library
   build-depends:       bytestring
                      , vector
                      , containers
+                     , transformers
                      , template-haskell
                      , inline-c
                      , primitive
