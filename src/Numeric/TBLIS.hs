@@ -19,6 +19,7 @@ module Numeric.TBLIS
     tblisToTypedTensor,
     TblisTensor (..),
     TblisScalar (..),
+    TblisError (..),
     IsTblisType,
     TblisComm,
     TblisConfig,
